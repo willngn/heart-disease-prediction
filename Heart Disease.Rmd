@@ -1,0 +1,171 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+
+# install packages and load libraries
+library(broom)
+library(dplyr)
+library(ggplot2)
+```
+
+**Step 1: Import data**
+
+```{r}
+
+hd_data <- read.csv("Cleveland_hd.csv")
+
+# take a look at the first 5 rows of hd_data
+head(hd_data, 5)
+```
+
+**Step 2: Clean data**
+
+More information about variables in this data can be accessed here: https://www.kaggle.com/nareshbhat/health-care-data-set-on-heart-attack-possibility
+
+We can see that "class" is a categorical variable converted into numerical values from 0 to 5. This will confuse our analysis. Therefore, we will convert it once again into binary values with 0 showing no presence of disease and 1 showing the presence of disease.
+
+```{r}
+
+# Get a new column showing binary class outcomes
+hd_data <- hd_data %>% mutate(hd = ifelse(class > 0, 1, 0))
+
+# Recode strings
+hd_data <- hd_data%>%mutate(hd_labelled = ifelse(hd == 0, "No Disease", "Disease"))
+
+# View data
+head(hd_data)
+```
+**Step 3: Understand individual predictors' influence**
+
+We first use statistical test to examine the individual relationship between one single independent variable (age, sex and heart rate) and the dependent variable (hd). Because age and heart rate are continuous variables, we will use a t-test which is suited for difference of means test. Meanwhile, because sex is a categorical variable, we choose a chi-squared test.
+
+```{r}
+# between sex and presence of heart disease
+hd_sex <- chisq.test(hd_data$sex, hd_data$hd)
+
+# age
+hd_age <- t.test(hd_data$age ~ hd_data$hd)
+
+# max heart rate
+hd_heartrate <- t.test(hd_data$thalach ~ hd_data$hd)
+
+hd_sex 
+hd_age
+hd_heartrate
+```
+
+We can see that all these three variables are very significantly associated with the outcome because p-values in all tests are very small. 
+
+**Step 4: Visualize the associations**
+
+We will now draw a boxplot with the calculated above confidence interval of the association between presence of heart disease and two independent variabes (age and heart rate). For sex, we will visually show the proportion of binary outcomes. Note that we still explore individual relationships.
+
+```{r}
+
+ggplot(data = hd_data, aes(x = hd_labelled,y = age)) + geom_boxplot() + labs(x = "Presence of Heart Disease", y = "Age")
+
+
+```
+```{r}
+ggplot(data = hd_data,aes(x = hd_labelled, y = thalach)) + geom_boxplot() + labs(x = "Presence of Heart Disease", y = "Maximum Heart Rate")
+```
+
+```{r}
+# Convert sex into factor for visualization
+hd_data <- hd_data %>% mutate(sex = factor(sex, levels = 0:1, labels = c("Female", "Male")))
+ggplot(data = hd_data,aes(x = hd_labelled, fill = sex)) + geom_bar(position = "fill") + ylab("Sex %")
+```
+
+**Step 5: Multiple logistic regression**
+
+Because we know all three independent variables are significantly associated with the outcome, we now conduct a multiple logistic regression by combining all three variables together to predict the presence of heart disease. We choose logistic regression because our response variable is a binary outcome, not a continuous numerical value. Therefore, linear regression will be less appropriate.
+
+Before constructing the logistic regression model, we now split the data into the training set and test set.
+
+```{r}
+# Get the indices for training data
+train_ind <- sort(sample(nrow(hd_data), nrow(hd_data)*.5))
+
+# Create the training set
+hd_train <- hd_data[train_ind,]
+
+head(hd_train)
+```
+
+```{r}
+# Create the test set
+hd_test <- hd_data[-train_ind,]
+
+head(hd_test)
+```
+
+
+```{r}
+# construct the model
+# use only three independent variables
+model <- glm(data = hd_train, hd ~ age + sex + thalach, family = "binomial")
+
+# extract the model summary
+summary(model)
+```
+
+From the summary table, we can see that age is no longer a statistically significant predictor. Meanwhile, sex and heart rate still have very small p-value.
+
+**Step 6: Odds Ratio and 95% Confidence Interval**
+
+```{r}
+
+# tidy up the coefficient table
+tidy_m <- tidy(model)
+tidy_m
+```
+
+```{r}
+# calculate OR
+tidy_m$OR <- tidy_m$estimate
+
+# calculate 95% CI and two bounds
+tidy_m$lower_CI <- exp(tidy_m$estimate - 1.96 * tidy_m$std.error)
+tidy_m$upper_CI <- exp(tidy_m$estimate + 1.96 * tidy_m$std.error)
+
+tidy_m
+```
+
+**Step 7: Prediction**
+
+Now, we will input values into the model and make predictions. We also apply a decision rule to convert predicted probabilities into binary outcomes. Later on, we will calculate the misclassification error rate to evaluate model accuracy.
+
+```{r}
+# apply the model to the testing data, predict the probability of the presence of heart disease
+predicted_values <- predict(model, newdata = hd_test, type = "response")
+
+# to convert predicted probabilities into binary outcomes, we apply an arbitrary decision rule
+# we consider 0.5 as the threshold here
+predicted_values_binary <- ifelse(predicted_values >= 0.5, 1, 0)
+
+# create a table to easily compare observed and predicted outcomes
+matrix <- table(predicted_values_binary, hd_test$hd)
+matrix
+
+```
+
+From this matrix, we can easily calculate the sensitivity and specificity of our model. However, now we will just calculate the misclassification error of our model
+
+**Step 8: Evaluate model accuracy**
+
+```{r}
+accuracy <- sum(diag(matrix)) / sum(matrix)
+
+misclassification_error <- 1 - accuracy
+
+accuracy
+misclassification_error
+```
+
+From results above, I conclude that our model can predict accurately 71.71% of all observations. In other words, out misclassification rate is 0.282 or 28.2%
+
+Overall, this is not a pretty good model but there is still room for improvement. We can try different independent variables as well as include interaction terms to understand further the association between predictors and the outcome - the presence of heart disease.
